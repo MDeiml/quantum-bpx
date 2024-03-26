@@ -20,3 +20,9 @@ pip3 install numpy scipy qiskit qiskit_aer
 ```
 
 The code was tested with the versions `qiskit 0.43.1` and `qiskit_aer 0.12.0`.
+
+## Citation
+
+If you use this code please cite our paper
+
+(add bibtex)
