@@ -11,3 +11,12 @@
 * `quantum_bpx.py` contains the implementation of the circuits described in Section 6 of the paper and the numerical experiment of Section 7.
 * `qsp.py` contains code for implementing quantum signal processing (QSP).
 * `block_encoding.py` contains code for managing block encodings as described in Section 3 of the paper, as well as the operations of Proposition 3.5.
+
+## Requirements
+
+This code requires the python packages `numpy`, `scipy`, `qiskit`, and `qiskit_aer`. To install them run
+```sh
+pip3 install numpy scipy qiskit qiskit_aer
+```
+
+The code was tested with the versions `qiskit 0.43.1` and `qiskit_aer 0.12.0`.
