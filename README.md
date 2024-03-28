@@ -1,5 +1,4 @@
 # Quantum Realization of the Finite Element Method
-
 *Matthias Deiml, Daniel Peterseim, 2024*
 
 (link to paper)
