@@ -3,7 +3,7 @@
 
 Supplementary material to the paper
 
-(link to paper)
+<https://arxiv.org/abs/2403.19512>
 
 > This paper presents a quantum algorithm for the solution of prototypical second-order linear elliptic partial differential equations discretized by $d$-linear finite elements on Cartesian grids of a bounded $d$-dimensional domain. An essential step in the construction is a BPX preconditioner, which transforms the linear system into a sufficiently well-conditioned one, making it amenable to quantum computation. We provide a constructive proof demonstrating that our quantum algorithm can compute suitable functionals of the solution to a given tolerance $\texttt{tol}$ with a complexity linear in $\texttt{tol}^{-1}$ for a fixed dimension $d$, neglecting logarithmic terms. This complexity is proportional to that of its one-dimensional counterpart and improves previous quantum algorithms by a factor of order $\texttt{tol}^{-2}$. We also detail the design and implementation of a quantum circuit capable of executing our algorithm, and present simulator results that support the quantum feasibility of the finite element method in the near future, paving the way for quantum computing approaches to a wide range of PDE-related challenges.
 
@@ -19,6 +19,10 @@ This code requires the python packages `numpy`, `scipy`, `qiskit`, and `qiskit_a
 ```sh
 pip3 install numpy scipy qiskit qiskit_aer
 ```
+or
+```sh
+pip3 install -r requirements.txt
+```
 
 The code was tested with the versions `qiskit 0.43.1` and `qiskit_aer 0.12.0`.
 
@@ -26,4 +30,13 @@ The code was tested with the versions `qiskit 0.43.1` and `qiskit_aer 0.12.0`.
 
 If you use this code please cite our paper
 
-(add bibtex)
+```bibtex
+@article{DP2024quantum,
+      title={Quantum Realization of the Finite Element Method}, 
+      author={Matthias Deiml and Daniel Peterseim},
+      year={2024},
+      eprint={2403.19512},
+      archivePrefix={arXiv},
+      primaryClass={quant-ph}
+}
+```
