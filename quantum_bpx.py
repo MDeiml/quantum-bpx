@@ -322,7 +322,7 @@ def ref_S_1d(L):
     1d stiffness matrix
     """
     N = 2 ** L - 1
-    return 2 ** (-L) * (2 * np.eye(N) - 1 * (np.eye(N, k=1) + np.eye(N, k=-1)))
+    return 2 ** L * (2 * np.eye(N) - 1 * (np.eye(N, k=1) + np.eye(N, k=-1)))
 
 
 def ref_C_1d(L):
@@ -330,7 +330,7 @@ def ref_C_1d(L):
     1d gradient
     """
     N = 2 ** L - 1
-    return 2 ** (-L/2) * (np.eye(N+1, N) - np.eye(N+1, N, k=-1))
+    return 2 ** (L/2) * (np.eye(N+1, N) - np.eye(N+1, N, k=-1))
 
 
 def ref_CM_1d(L):
@@ -340,7 +340,7 @@ def ref_CM_1d(L):
     N = 2 ** L - 1
     a = 1 / (2 * np.sqrt(3))
     b = 1 / 2
-    return 2 ** (-L) * np.tensordot(np.array([b, a]), np.eye(N+1, N), 0) + np.tensordot(np.array([b, -a]), np.eye(N+1, N, k=-1), 0)
+    return 2 ** L * np.tensordot(np.array([b, a]), np.eye(N+1, N), 0) + np.tensordot(np.array([b, -a]), np.eye(N+1, N, k=-1), 0)
 
 
 def ref_M_1d(L):
@@ -348,7 +348,7 @@ def ref_M_1d(L):
     1d mass matrix
     """
     N = 2 ** L - 1
-    return 2 ** (-2 * L) * (2/3) * np.eye(N) + (1/6) * (np.eye(N, k=1) + np.eye(N, k=-1))
+    return 2 ** (2 * L) * (2/3) * np.eye(N) + (1/6) * (np.eye(N, k=1) + np.eye(N, k=-1))
 
 
 def ref_C(L, DIM):
@@ -614,7 +614,7 @@ if __name__ == "__main__":
 
             # Reverse normalization
             result *= qsp_norm ** 2
-            result *= normalization ** 2
+            result /= normalization ** 2
             result *= norm_rhs
 
             print(result)
@@ -636,5 +636,5 @@ if __name__ == "__main__":
     )
 
     # Output reference solution (should be 63/512 for the given example)
-    ref = np.dot(test_m, np.linalg.solve(ref_S(L, DIM), test_b))
+    ref = np.dot(test_m, np.linalg.solve(ref_S(L, DIM), test_b)) * norm_rhs
     print(f"true solution = {ref}")
