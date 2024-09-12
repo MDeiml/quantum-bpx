@@ -1,14 +1,16 @@
 # Copyright (C) 2024 Matthias Deiml, Daniel Peterseim - All rights reserved
 
 import qiskit as qk
-from qiskit.circuit.library import QFT, MCXGate, RYGate
-from qiskit_aer import AerSimulator, Aer
+from qiskit.circuit.library import QFT, MCXGate, RYGate, StatePreparation
+from qiskit_aer import AerSimulator
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+from qiskit_ibm_runtime import SamplerV2 as Sampler, QiskitRuntimeService, Session
 
 import numpy as np
 import scipy.sparse as sp
 
 from qsp import qsp, Wx_to_R
-from block_encoding import CPiNot, BlockEncoding, _mcx_nonsymmetric
+from block_encoding import CPiNot, BlockEncoding, _mcx_nonsymmetric, _run_circuit
 
 
 def CInc(N):
@@ -28,6 +30,18 @@ def CInc(N):
     elif N == 2:
         qc.ccx(x, y[0], y[1])
         qc.cx(x, y[0])
+    elif N == 4:
+        a = qk.QuantumRegister(2, name="a")
+
+        qc = qk.QuantumCircuit(x, y, a, name="c_inc")
+        qc.rccx(y[0], x, a[0])
+        qc.rccx(y[1], y[2], a[1])
+        qc.ccx(a[0], a[1], y[3])
+        qc.rccx(y[1], y[2], a[1])
+        qc.ccx(a[0], y[1], y[2])
+        qc.cx(a[0], y[1])
+        qc.rccx(y[0], x, a[0])
+        qc.cx(x, y[0])
     else:
         qc.append(QFT(N, do_swaps=False).to_gate(), y[:])
         for j in range(N):
@@ -38,7 +52,7 @@ def CInc(N):
     return qc
 
 
-def CRShift(LOG_N, DIM):
+def CRShift(LOG_N, DIM, uncompute_control=False):
     """
     Circuit implementing a bitwise right shift of the first register by the
     second register.
@@ -64,6 +78,8 @@ def CRShift(LOG_N, DIM):
         qc.append(CInc(LOG_N-1), y[:])
 
         qc.append(next, x[1::2] + y[1:])
+        if uncompute_control:
+            qc.append(CInc(LOG_N-1).inverse(), y[:])
 
     return qc.decompose(["c_inc", "shift"])
 
@@ -85,20 +101,23 @@ def C(LOG_L, DIM):
     j = qk.QuantumRegister(L * DIM, name="j")
     l = qk.QuantumRegister(LOG_L, name="l")
     g = qk.QuantumRegister(DIM, name="g")
-    a = qk.AncillaRegister(1, name="a")
+    a = qk.AncillaRegister(2, name="a")
 
     if DIM == 1:
-        qc = qk.QuantumCircuit(j, k, l, g, name="C")
+        qc = qk.QuantumCircuit(j, k, l, a, name="C")
     else:
         qc = qk.QuantumCircuit(j, k, s, l, g, a, name="C")
         qc.h(s)
 
     qc.h(k)
 
-    qc.append(CRShift(LOG_L, DIM), j[:] + l[:])
+    specialize = DIM == 1 and LOG_L == 2
+
+    if not specialize:
+        qc.append(CRShift(LOG_L, DIM), j[:] + l[:])
     for d in range(DIM):
-        qc.append(CInc(L), [k[d]] + j[d*L:(d+1)*L])
-    qc.append(CRShift(LOG_L, DIM).inverse(), j[:] + l[:])
+        qc.append(CInc(L), [k[d]] + j[d*L:(d+1)*L] + a[:])
+    qc.append(CRShift(LOG_L, DIM, uncompute_control=specialize).inverse(), j[:] + l[:])
 
     for d in range(DIM):
         if DIM == 1:
@@ -183,14 +202,14 @@ def C_F(LOG_L, DIM):
     s = qk.QuantumRegister(LOG_DIM, name="s")
     l = qk.QuantumRegister(LOG_L, name="l")
     g = qk.QuantumRegister(DIM, name="g")
-    a = qk.AncillaRegister(1, name="a")
+    a = qk.AncillaRegister(2, name="a")
 
     if DIM == 1:
-        qc = qk.QuantumCircuit(j, k, l, a)
+        qc = qk.QuantumCircuit(j, k, l, a, name="C_F")
         qc.append(C(LOG_L, DIM), j[:] + k[:] + l[:] + a[:])
         qc.append(T(LOG_L, DIM), j[:] + l[:] + [a[0]])
     else:
-        qc = qk.QuantumCircuit(j, k, s, l, g, a, name="TC")
+        qc = qk.QuantumCircuit(j, k, s, l, g, a, name="C_F")
         qc.append(C(LOG_L, DIM), j[:] + k[:] + s[:] + l[:] + g[:] + a[:])
         qc.append(T(LOG_L, DIM), j[:] + k[:] + l[:] + [a[0]])
 
@@ -229,14 +248,14 @@ def C_F(LOG_L, DIM):
         CX_dom = qk.QuantumCircuit(j, k, l, b, a_extra, name="Pi_j")
         CX_dom.rccx(j[0], j[1], ae[0])
         CX_dom.rccx(j[2], j[3], ae[1])
-        CX_dom.cswap(l[1], j[0], j[2])
+        CX_dom.cswap(l[1], j[1], j[3])
 
-        CX_dom.rccx(l[0], j[0], ae[2])
-        CX_dom.cx(l[0], ae[2])
+        CX_dom.x(j[3])
+        CX_dom.rccx(l[0], j[3], ae[2])
 
-        CX_dom.rccx(l[1], ae[0], ae[3])
         CX_dom.rccx(ae[0], ae[1], ae[3])
-        CX_dom.cx(l[1], ae[3])
+        CX_dom.x(ae[1])
+        CX_dom.rccx(l[1], ae[1], ae[3])
 
         CX_dom.x(ae[2])
         CX_dom.x(ae[3])
@@ -500,34 +519,12 @@ if __name__ == "__main__":
     print(f"Effective condition: {1/np.linalg.norm(C_exp @ Q, ord=-2)}")
 
     ######
-    # Inversion and measurement procedure
+    # Right hand side and quantity of interest
     ######
-
-    # QSP angles and normalization factor
-
-    # J = 12
-    angles = Wx_to_R(np.array([-2.2283320972846186, 0.792370970962418, 0.045284559228113475, -0.674546025818336, -0.14232550307650094, 0.4900788479211249, -0.195484349444351, 1.9408850703466565, -0.11525779173228821, 0.03926750904844137, 0.6854824933793874, -2.8996835577783746, 1.1822706331366992, -0.3742605291971066, -0.3742605291962322, 1.1822706331327244, 0.24190909581331566, 0.6854824933862489, 0.039267509059546735, -0.11525779171341075, -1.2007075832432634, -0.19548434946293824, 0.49007884791560474, -0.14232550306996183, -0.674546025822347, 0.04528455921685026, 0.7923709709617691, -0.6575357704863706]))
-    poly = [1.03687311e+01, -2.20816205e+02, 2.87661244e+03, -2.48949886e+04, 1.48758550e+05, -6.28269017e+05, 1.90372474e+06, -4.16986054e+06, 6.59722842e+06, -7.45485567e+06, 5.86005248e+06, -3.04156146e+06, 9.36486890e+05, -1.29475352e+05]
-    qsp_norm = 4.31117904
-
-    # J = 6
-    # angles = Wx_to_R(np.array([-2.1726508503438953, 0.25829346822873966, 0.9713592720773033, 0.5663055620532766, -0.8974363445219233, -0.1602820187317635, -0.1602820187317482, 2.2441563090678787, -2.5752870915365187, 0.9713592720773214, 0.2582934682287247, -0.6018545235490137]))
-    # poly = [6.51555955, -49.98310509, 173.26705273, -295.99810341, 243.22713684, -76.75916282]
-    # qsp_norm = 3.37104786
-
-    # J = 5
-    # angles = Wx_to_R(np.array([-0.6076998438496887, 0.609208329716424, -0.11400911596534327, -1.0925147543305, -0.18747923204621375, -0.18747923204621175, 2.049077899259295, -0.11400911596533464, -2.5323843238733543, 0.9630964829452084]))
-    # poly = [5.76934379, -33.95294717, 82.03012371, -86.07933114, 32.58188909]
-    # qsp_norm = 3.32527027
-
-    # Construct the pseudoinverse C_F^+ using the above angles
-    qc_inv = qsp(qc, angles)
-    print(qc_inv.simplify()._U)
 
     # Right hand and quantity of interset
     test_b = np.ones((2 ** L - 1) ** DIM) / 2 ** L
-    test_m = np.zeros_like(test_b)
-    test_m[8] = 1
+    test_m = test_b.copy()
 
     # Apply preconditioner and normalize rhs and quantity of interest
     test_Pb = P.T @ test_b
@@ -541,83 +538,124 @@ if __name__ == "__main__":
     test_Pb /= np.linalg.norm(test_Pb) * np.sqrt(2)
     test_Pm /= np.linalg.norm(test_Pm) * np.sqrt(2)
 
-    # Construct the quantum circuit for the measurement precedure
-    ancillas = max(qc_inv._U.num_ancillas, qc_inv._CX_img.num_ancillas())
-
-    # The initial state of the quantum computer which already contains the
-    # right hand sides and quantity of interest vectors.
-    # This will initial state will be applied artificially in the simulator
-    initial_state = np.zeros(2 ** (qc_inv._embedding_size + ancillas))
+    # Construct circuit for m and b
+    initial_state = np.zeros(2 ** 8)
     initial_state[P_dom] = test_Pb
-    initial_state[P_dom + 2 ** qc_inv._embedding_size] = test_Pm
+    initial_state[P_dom + 2 ** 7] = test_Pm
 
-    x = qk.QuantumRegister(qc_inv._embedding_size)
-    a = qk.QuantumRegister(ancillas)
-    b = [a[0]]
-    c = qk.ClassicalRegister(2)
+    qc_b = qk.QuantumCircuit(8, name="b")
 
-    test_qc = qk.QuantumCircuit(x, a, c)
+    level_norms = np.sqrt(2) * np.array([np.linalg.norm(initial_state[i*2**5:(i+1)*2**5]) for i in range(4)])
 
-    # In a real world application you would do something like the following
-    # test_qc.h(b)
-    # test_qc.append(qc_r.control(1, ctrl_state=0), b[:] + x[:])
-    # test_qc.append(qc_m.control(1, ctrl_state=1), b[:] + x[:])
+    qc_b.prepare_state(level_norms, [5, 6])
 
-    # Instead we just set the simulator to the corresponding state
-    test_qc.set_statevector(initial_state)
+    for i in range(4):
+        qc_b.ccx(5, 6, 7, ctrl_state=i)
+        qc_b.ry(np.pi, 3-i)
+        # qc_b.cx(6, 3-i, ctrl_state=0)
+        angle = np.arctan(np.sqrt((2**(3-i)-1)/2**(3-i)))
+        if i == 3:
+            qc_b.ry(-np.pi / 2, 3-i)
+            qc_b.append(RYGate(2 * (angle - np.pi/4)).control(3), list(range(1, 4)) +  [3-i])
+        else:
+            qc_b.cry(-np.pi / 2, 7, 3-i)
+            qc_b.append(RYGate(2 * (angle - np.pi/4)).control(1 + i), [7] + list(range(4-i, 4)) +  [3-i])
+        # qc_b.append(HGate().control(i + 1), [6] + list(range(4-i, 4)) +  [3-i])
+    qc_b.x(7)
 
-    test_qc.h(b)
-    test_qc.measure(b, c[0])
-    test_qc.reset(b)
+    # Verify circuit for m and b
+    x = np.zeros(2**qc_b.num_qubits)
+    x[0] = 1
+    res = _run_circuit(qc_b, x)[:2**7]
+    print(f"Error in right hand side: {np.linalg.norm(initial_state[:2**7] * np.sqrt(2) - res)}")
 
-    # Apply the pseudoinverse
-    test_qc.append(qc_inv._U, x[:] + a[:qc_inv._U.num_ancillas])
-    test_qc.append(qc_inv._CX_img.to_circuit(True), x[:] + b[:] + a[1:qc_inv._CX_img.num_ancillas()+1])
+    ######
+    # QSP & Solver
+    ######
 
-    # The coefficent could be applied here
+    # J = 2
+    angles = Wx_to_R(np.array([0.4840389288693594, -0.5882474595254135, -0.5882474595254125, 2.0548352556642566]))
 
-    test_qc.x(b)
-    test_qc.measure(b, c[1])
+    # J = 3
+    # angles = Wx_to_R(np.array([-1.3159339251463265, -0.4393974349416314, 0.4452378475344494, 0.44523784753445184, -0.4393974349416263, 0.25486240164856544]))
 
-    # Print the complete circuit
-    test_qc = test_qc.decompose("CX_Pi")
-    print(test_qc)
+    # J = 4
+    # angles = Wx_to_R(np.array([0.3329987485149657, -0.0023918349460009813, -2.247065453959354, 0.48132185830505314, 0.4813218583050566, 0.8945271996304389, -0.00239183494600137, -1.2377975782799293]))
+
+    # J = 5
+    # angles = Wx_to_R(np.array([-0.6076998438496887, 0.609208329716424, -0.11400911596534327, -1.0925147543305, -0.18747923204621375, -0.18747923204621175, 2.049077899259295, -0.11400911596533464, -2.5323843238733543, 0.9630964829452084]))
+
+    qc_inv = qsp(qc, angles)
+
+    c = qk.ClassicalRegister(4 + 7, name="c")
+    x = qk.QuantumRegister(qc._embedding_size, name="x")
+    ancillas = qc_inv._U.num_ancillas
+    a = qk.QuantumRegister(ancillas, name="a")
+    b_qsp = qk.QuantumRegister(1, name="b_qsp")
+
+    qc_inv_b = qk.QuantumCircuit(x, b_qsp, a, c)
+
+    # Prepare state
+    qc_inv_b.append(qc_b, x[:] + [a[0]])
+
+    # Apply scaled matrix inverse
+    qc_inv_b.append(qc_inv._U, x[:] + b_qsp[:] + a[:qc_inv._U.num_ancillas])
+
+    # "Copy" state, so that we can check it is in the projected space later
+    for i in range(3):
+        qc_inv_b.cx(x[4+i], a[-3+i])
+
+    # Apply C_F again, to obtain a state of which the norm relates to the quantity of interest
+    qc_inv_b.append(qc.transpose()._U, x[:] + a[:qc._U.num_ancillas])
+
+    # Measure relevant bits
+    qc_inv_b.measure(x, c[4:])
+    qc_inv_b.measure(a[-3:] + b_qsp[:], c[:4])
+
+    print(qc_inv_b)
 
     # The two-qubit errors that we want to simulate
-    noises = np.array([0, 1e-5, 1e-4, 10 ** (-3.5), 1e-3, 1e-2])
+    noises = np.array([0, 1e-5, 1e-4, 7e-3, 1e-3, 1e-2])
 
     # Number of runs per value in noises
     runs = 200
 
     # Number of shots per run
-    shots = 1000
+    shots = 10000
 
     results = np.zeros((len(noises), runs))
 
     for (i, noise) in enumerate(noises):
         noisy_backend = AerSimulator(noise_model=define_noise_model(noise * 1e-2, noise))
         print("Transpiling...")
-        circ = qk.transpile(test_qc, noisy_backend, optimization_level=3)
+        circ = qk.transpile(qc_inv_b, noisy_backend, optimization_level=3)
         print("Running...")
         for run in range(runs):
             result = noisy_backend.run(circ, shots=shots).result()
             counts = result.get_counts()
-            print(counts)
 
-            total = 0
+            a = 0
+            b = 0
             for k in counts.keys():
-                total += counts[k]
+                if k[-4:] != "0000":
+                    continue
+                a += counts[k]
+                if k[2] != "0":
+                    continue
+                if k[3:7] == "1111":
+                    continue
+                level = int(k[0:2], 2)
+                if k[3:3+level] == (level * "1"):
+                    b += counts[k]
 
-            a = counts["00"] if "00" in counts else 0
-            b = counts["01"] if "01" in counts else 0
-            result = (a - b) / total
+            result = a / b
 
             # Reverse normalization
-            result *= qsp_norm ** 2
             result /= normalization ** 2
             result *= norm_rhs
 
-            print(result)
+            print(f"result: {result}")
+
             results[i, run] = result
 
     # Compute and store statistics of measured results
@@ -635,6 +673,5 @@ if __name__ == "__main__":
         delimiter=''
     )
 
-    # Output reference solution (should be 63/512 for the given example)
     ref = np.dot(test_m, np.linalg.solve(ref_S(L, DIM), test_b)) * norm_rhs
     print(f"true solution = {ref}")

@@ -1,10 +1,9 @@
 # Copyright (C) 2024 Matthias Deiml, Daniel Peterseim - All rights reserved
 
 import qiskit as qk
-import qiskit_aer
 import numpy as np
-from qiskit.circuit.library import MCXGate
-from block_encoding import *
+from qiskit_aer import AerSimulator
+from block_encoding import BlockEncoding, CPiNot
 
 
 def qsp(A: BlockEncoding, angles: list) -> BlockEncoding:
@@ -17,27 +16,46 @@ def qsp(A: BlockEncoding, angles: list) -> BlockEncoding:
 
     qc.h(b)
 
-    for (i, angle) in enumerate(reversed(angles)):
-        if i % 2 == 0:
+    backend = AerSimulator()
+    opt = qk.transpile(A.simplify()._U, backend, optimization_level=3)
+
+    for (i, angle) in enumerate(angles):
+
+        if i == 0:
+            # qc.append(A._CX_dom.to_circuit(), x[:] + b[:] + a[:A._CX_dom.num_ancillas()])
+            qc.x(b)
+            qc.rz(2 * angle, b)
+            qc.x(b)
             qc.append(A._U, x[:] + a[:A._U.num_ancillas])
             qc.append(A._CX_img.to_circuit(), x[:] + b[:] + a[:A._CX_img.num_ancillas()])
-        else:
-            qc.append(A._U.inverse(), x[:] + a[:A._U.num_ancillas])
-            qc.append(A._CX_dom.to_circuit(), x[:] + b[:] + a[:A._CX_dom.num_ancillas()])
+            continue
 
-        qc.rz(-2 * angle, b)
+        qc.rz(2 * angle, b)
 
-        if i % 2 == 0:
-            qc.append(A._CX_img.to_circuit().inverse(), x[:] + b[:] + a[:A._CX_img.num_ancillas()])
+        if i == len(angles) - 1:
+            if i % 2 == 0:
+                qc.append(A._CX_dom.to_circuit().inverse(), x[:] + b[:] + a[:A._CX_dom.num_ancillas()])
+                qc.append(A._U, x[:] + a[:A._U.num_ancillas])
+            else:
+                qc.append(A._CX_img.to_circuit().inverse(), x[:] + b[:] + a[:A._CX_img.num_ancillas()])
+                qc.append(A._U.inverse(), x[:] + a[:A._U.num_ancillas])
+        elif i % 2 == 0:
+            qc.append(opt, x[:] + b[:] + a[:])
         else:
-            qc.append(A._CX_dom.to_circuit().inverse(), x[:] + b[:] + a[:A._CX_dom.num_ancillas()])
+            qc.append(opt.inverse(), x[:] + b[:] + a[:])
 
     qc.h(b)
 
-    return BlockEncoding(
-        qc,
-        A._CX_dom.extend_embedding(1, False).logical_and(CPiNot(A._embedding_size + 1, [A._embedding_size])),
-        A._CX_img.extend_embedding(1, False).logical_and(CPiNot(A._embedding_size + 1, [A._embedding_size])))
+    if len(angles) % 2 == 0:
+        return BlockEncoding(
+            qc,
+            A._CX_dom.extend_embedding(1, False).logical_and(CPiNot(A._embedding_size + 1, [A._embedding_size])),
+            A._CX_dom.extend_embedding(1, False).logical_and(CPiNot(A._embedding_size + 1, [A._embedding_size])))
+    else:
+        return BlockEncoding(
+            qc,
+            A._CX_dom.extend_embedding(1, False).logical_and(CPiNot(A._embedding_size + 1, [A._embedding_size])),
+            A._CX_img.extend_embedding(1, False).logical_and(CPiNot(A._embedding_size + 1, [A._embedding_size])))
 
 
 def Wx_to_R(angles):
